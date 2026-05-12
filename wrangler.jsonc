@@ -15,11 +15,5 @@
       "database_name": "bot",
       "database_id": "c38407c8-f4ad-4340-b493-25054a42634c"
     }
-  ],
-   "r2_buckets": [
-    {
-      "binding": "BUCKET",
-      "bucket_name": "main"
-    }
   ]
 }
