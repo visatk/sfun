@@ -16,12 +16,12 @@ app.get("/", (c) =>
   c.json({
     status: "online",
     bot: "GhostSweeper",
-    version: "1.0.0",
-    description: "Cleans deleted Telegram accounts from groups",
+    version: "1.1.0",
+    description: "Asynchronous Edge-Optimized Telegram Sweeper",
   })
 );
 
-// Webhook registration endpoint (call once to register)
+// Webhook registration endpoint
 app.get("/setup", async (c) => {
   const token = c.req.query("token");
   if (token !== c.env.BOT_SECRET) {
@@ -39,7 +39,14 @@ app.post("/webhook", async (c) => {
   }
 
   const update = await c.req.json();
-  await handleUpdate(update, c.env);
+  
+  // Decouple execution: Process the update in the background, freeing the webhook.
+  c.executionCtx.waitUntil(
+    handleUpdate(update, c.env, c.executionCtx).catch((err) => {
+      console.error("[GhostSweeper] Unhandled execution error:", err);
+    })
+  );
+
   return c.json({ ok: true });
 });
 
@@ -50,22 +57,24 @@ app.get("/stats", async (c) => {
     return c.json({ error: "Unauthorized" }, 401);
   }
   try {
-    const { results } = await c.env.DB.prepare(`
-      SELECT
-        COUNT(*) as total_groups,
-        SUM(total_removed) as total_removed,
-        SUM(total_scans) as total_scans
-      FROM group_stats
-    `).all();
-    const recent = await c.env.DB.prepare(`
-      SELECT chat_id, chat_title, total_removed, total_scans, last_scan_at
-      FROM group_stats
-      ORDER BY last_scan_at DESC
-      LIMIT 10
-    `).all();
-    return c.json({ summary: results[0], recent_groups: recent.results });
-  } catch {
-    return c.json({ error: "DB not initialised" }, 500);
+    const batch = await c.env.DB.batch([
+      c.env.DB.prepare(`
+        SELECT COUNT(*) as total_groups, SUM(total_removed) as total_removed, SUM(total_scans) as total_scans 
+        FROM group_stats
+      `),
+      c.env.DB.prepare(`
+        SELECT chat_id, chat_title, total_removed, total_scans, last_scan_at 
+        FROM group_stats 
+        ORDER BY last_scan_at DESC LIMIT 10
+      `)
+    ]);
+
+    return c.json({ 
+      summary: batch[0].results[0], 
+      recent_groups: batch[1].results 
+    });
+  } catch (err) {
+    return c.json({ error: "Database not fully initialized or reachable" }, 500);
   }
 });
 
